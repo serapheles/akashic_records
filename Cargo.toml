@@ -20,3 +20,4 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "chrono"] }
 #apparently upgrading these brakes things, fix later
 hyper = "0.14.30"
 hyper-rustls = "0.25.0"
+log = "0.4.22"

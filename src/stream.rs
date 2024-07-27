@@ -157,7 +157,9 @@ impl StreamManager {
         dict.set_item("nooverwrite", true).unwrap();
         dict.set_item("hls_use_mpegts", true).unwrap();
         dict.set_item("writethumbnail", true).unwrap();
-        dict.set_item("socket_timeout", 60).unwrap();
+        dict.set_item("socket_timeout", 90).unwrap(); // Not sure what value is best here.
+        dict.set_item("quiet", true).unwrap();
+        // set logger
 
         // Sets download folders. I would prefer for the temp folder to be separate, rather than
         // nested, but that's a problem for another day.

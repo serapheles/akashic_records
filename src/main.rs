@@ -3,13 +3,12 @@ use std::collections::{HashSet, VecDeque};
 use std::error::Error;
 use futures::executor::block_on;
 use serde_json::Value;
-use tracing::{debug, error, info, Level, span, subscriber, warn};
+use tracing::{debug, error, info, Level, span, subscriber, warn, trace};
 use tracing::{info_span, Span};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_panic::panic_hook;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, Registry};
 use tracing_subscriber::fmt::time::ChronoLocal;
-
 use crate::api_handler::*;
 use crate::stream::StreamManager;
 
@@ -72,12 +71,13 @@ fn api_loop() -> Result<(), Box<dyn Error>> {
     });
     let mut found_set: HashSet<String> = HashSet::new();
     let api_caller = DexClient::new(dex_key);
-
     loop {
+        debug!("Start of loop, checking for API response.");
         let response: Value = loop {
             match block_on(api_caller.live_check()) {
                 Ok(val) => {
                     if val.status().is_success() {
+                        debug!("Response status is success");
                         break block_on(val.json::<Value>()).unwrap();
                     } else {
                         error!("Bad response status: {:?}.", val.status());
@@ -90,11 +90,14 @@ fn api_loop() -> Result<(), Box<dyn Error>> {
             // On failed request, wait two minutes before trying again.
             // Generally, this is either from calling before the device has connected to the internet
             // or because HoloDex is down.
+            debug!("Starting response sleep");
             sleep(time::Duration::from_secs(120));
         };
 
+        debug!("Starting response loop.");
         for val in response.as_array().unwrap() {
             if found_set.contains(val["id"].as_str().unwrap()) {
+                debug!("Re-found a stream");
                 continue;
             }
 
@@ -125,9 +128,14 @@ fn api_loop() -> Result<(), Box<dyn Error>> {
                 }
                 continue;
             }
+            // If for some reason a stream isn't caught, this will show if it was overlooked or
+            // somehow failed to be seen at all.
+            debug!("Stream found and ignored: {}", val["id"]);
         }
+        debug!("Starting loop sleep.");
         sleep(time::Duration::from_secs(120));
     }
+
 }
 
 // Usually the stream to download is a YouTube stream with a unique id, but other sources (Twitch)
@@ -146,6 +154,9 @@ fn target_parse(info: &Value) -> Option<String> {
         start_stream_loop(id);
         Some(info["id"].to_string())
     } else {
+        // Most likely, this is an upcoming Twitch stream, but included (and at warn level) to ensure
+        // nothing is slipping through.
+        warn!("Stream checked, but failed the target parse: {}", info["id"]);
         None
     }
 }
@@ -155,7 +166,7 @@ fn target_parse(info: &Value) -> Option<String> {
 // TODO: Set up spans for stream threads (probably before the struct is created, in the thread closure).
 fn start_stream_loop(target: String) {
     thread::spawn(move || {
-        StreamManager::new(target.clone()).unwrap().download_loop();
+        // StreamManager::new(target.clone()).unwrap().download_loop();
         info!("{}: Thread ended.", target);
     });
 }
@@ -193,7 +204,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Set up the filter layer. Attempts to use the RUST_LOG env level, if it exists.
     let filter_layer = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info"))
+        .or_else(|_| EnvFilter::try_new("debug"))
         .unwrap();
 
     let subscriber = Registry::default()
