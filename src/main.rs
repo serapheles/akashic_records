@@ -1,7 +1,6 @@
 use std::{fs, thread, thread::sleep, time};
 use std::collections::{HashSet, VecDeque};
 use std::error::Error;
-use futures::executor::block_on;
 use serde_json::Value;
 use tracing::{debug, error, info, Level, span, subscriber, warn, trace};
 use tracing::{info_span, Span};
@@ -74,11 +73,11 @@ fn api_loop() -> Result<(), Box<dyn Error>> {
     loop {
         debug!("Start of loop, checking for API response.");
         let response: Value = loop {
-            match block_on(api_caller.live_check()) {
+            match api_caller.live_check() {
                 Ok(val) => {
                     if val.status().is_success() {
                         debug!("Response status is success");
-                        break block_on(val.json::<Value>()).unwrap();
+                        break val.json::<Value>().unwrap();
                     } else {
                         error!("Bad response status: {:?}.", val.status());
                     }
@@ -130,7 +129,7 @@ fn api_loop() -> Result<(), Box<dyn Error>> {
             }
             // If for some reason a stream isn't caught, this will show if it was overlooked or
             // somehow failed to be seen at all.
-            debug!("Stream found and ignored: {}", val["id"]);
+            // debug!("Stream found and ignored: {}", val["id"]);
         }
         debug!("Starting loop sleep.");
         sleep(time::Duration::from_secs(120));
@@ -153,10 +152,15 @@ fn target_parse(info: &Value) -> Option<String> {
         info!("External stream found from api: {}", id);
         start_stream_loop(id);
         Some(info["id"].to_string())
+    } else if info["placeholderType"] == "scheduled-yt-stream" {
+        // Stream is expected based on a posted schedule or some other source, but a waiting room
+        // hasn't been found yet. There is a "certainty" value, but I don't see any way to make it 
+        // relevant, nor is there really anything to do with a stream that doesn't exist yet.
+        None
     } else {
         // Most likely, this is an upcoming Twitch stream, but included (and at warn level) to ensure
         // nothing is slipping through.
-        warn!("Stream checked, but failed the target parse: {}", info["id"]);
+        warn!("Stream checked, but failed the target parse: {}", info);
         None
     }
 }
@@ -166,14 +170,13 @@ fn target_parse(info: &Value) -> Option<String> {
 // TODO: Set up spans for stream threads (probably before the struct is created, in the thread closure).
 fn start_stream_loop(target: String) {
     thread::spawn(move || {
-        // StreamManager::new(target.clone()).unwrap().download_loop();
+        StreamManager::new(target.clone()).unwrap().download_loop();
         info!("{}: Thread ended.", target);
     });
 }
 
 // 1 sec Miko stream for testing: CAbEy8xAKSE
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
 
     // Sets up a rolling log file.
     // There's a *lot* of components to the tracing logger, and they all had their own documentation,

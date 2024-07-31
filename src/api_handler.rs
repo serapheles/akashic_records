@@ -12,14 +12,14 @@ use reqwest::blocking::Response;
 use tracing::error;
 
 pub struct DexClient {
-    client: Client,
+    client: blocking::Client,
     header: String,
     url: Url,
 }
 
 impl DexClient {
     pub fn new(header: String) -> Self {
-        let client = Client::new();
+        let client = blocking::Client::new();
         let endpoint = "https://holodex.net/api/v2/live";
         let params = [("type", "stream,placeholder"), ("max_upcoming_hours", "168")];
         let url = Url::parse_with_params(endpoint, params).unwrap();
@@ -31,8 +31,8 @@ impl DexClient {
         }
     }
 
-    pub async fn live_check(&self) -> Result<reqwest::Response, reqwest::Error> {
-        self.client.get(self.url.clone()).header("X-APIKEY", &self.header).send().await
+    pub fn live_check(&self) -> reqwest::Result<Response> {        
+        self.client.get(self.url.clone()).header("X-APIKEY", &self.header).send()
     }
 }
 
