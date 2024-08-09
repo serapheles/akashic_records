@@ -207,7 +207,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Set up the filter layer. Attempts to use the RUST_LOG env level, if it exists.
     let filter_layer = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("debug"))
+        .or_else(|_| EnvFilter::try_new("warn"))
         .unwrap();
 
     let subscriber = Registry::default()
