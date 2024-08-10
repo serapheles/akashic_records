@@ -148,7 +148,8 @@ fn target_parse(info: &Value) -> Option<String> {
         Some(id)
     } else if info["placeholderType"] == "external-stream" && info["status"] == "live" {
         // Generally Twitch, but may pick up Twitter Spaces or other odd ball sources.
-        let id = info["link"].to_string();
+        let mut id = info["link"].to_string();
+        id.retain(|c| !c.eq(&'"'));
         info!("External stream found from api: {}", id);
         start_stream_loop(id);
         Some(info["id"].to_string())
