@@ -1,11 +1,11 @@
-use std::{cmp, thread, time};
 use std::error::Error;
+use std::{cmp, thread, time};
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyTuple};
 use tokio::runtime::Runtime;
 use tokio::task;
-use tracing::{debug, error, info, Level, span, subscriber, warn};
+use tracing::{debug, error, info, span, subscriber, warn, Level};
 
 use crate::api_handler;
 
@@ -31,27 +31,30 @@ impl PyStruct {
     // This feels incredibly hacky, but yt-dlp intentionally hides the info_dict
     // There may be util methods to access things, but this adds a lot of options for future development.
     #[pyo3(signature = (* args, * * kwargs))]
-    fn hook(&mut self,
-            _py: Python<'_>,
-            args: &Bound<'_, PyTuple>,
-            kwargs: Option<&Bound<'_, PyDict>>, ) -> PyResult<()> {
+    fn hook(
+        &mut self,
+        _py: Python<'_>,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
         let dict = match args.get_item(0) {
-            Ok(val) => {
-                val.downcast_into::<PyDict>()?
-            }
+            Ok(val) => val.downcast_into::<PyDict>()?,
             Err(err) => {
                 error!("Failed to get dict from progress hook: {}", err);
                 return Err(err);
             }
         };
 
-        // May need to check 'was_live' and/or 'live_status' to ensure it doesn't stop halfway 
-        // through a download of a non-live video 
+        // May need to check 'was_live' and/or 'live_status' to ensure it doesn't stop halfway
+        // through a download of a non-live video
         if dict.get_item("status")?.unwrap().eq("finished")? {
-            match dict.get_item("info_dict")?.unwrap()
+            match dict
+                .get_item("info_dict")?
+                .unwrap()
                 .get_item("live_status")?
                 .extract::<String>()?
-                .as_str() {
+                .as_str()
+            {
                 "is_upcoming" => {
                     // If a YouTube video is upcoming, the functions aren't even called, so this
                     // result would be of interest.
@@ -83,29 +86,40 @@ impl PyStruct {
     // Somewhat redundant with the hook function, but this sets stuff up early and can be expanded.
     // Would be nice to ensure this is only called once, at the beginning.
     #[pyo3(signature = (* args, * * kwargs))]
-    fn pre_filter(&mut self,
-                  _py: Python<'_>,
-                  args: &Bound<'_, PyTuple>,
-                  kwargs: Option<&Bound<'_, PyDict>>, ) -> PyResult<()> {
+    fn pre_filter(
+        &mut self,
+        _py: Python<'_>,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
         //kwargs seems to have a dict of {"incomplete" : bool}
 
         let dict = match args.get_item(0) {
-            Ok(val) => {
-                val.downcast_into::<PyDict>()?
-            }
+            Ok(val) => val.downcast_into::<PyDict>()?,
             Err(err) => {
                 error!("Failed to get dict from progress hook: {}", err);
                 return Err(err);
             }
         };
 
-        if dict.get_item("webpage_url_domain")?.unwrap()
-            .eq("youtube.com")? {
+        if dict
+            .get_item("webpage_url_domain")?
+            .unwrap()
+            .eq("youtube.com")?
+        {
             self.yt_bool = true;
         }
 
-        self.is_live = dict.get_item("is_live")?.unwrap().downcast_exact::<PyBool>()?.is_true();
-        self.was_live = dict.get_item("was_live")?.unwrap().downcast_exact::<PyBool>()?.is_true();
+        self.is_live = dict
+            .get_item("is_live")?
+            .unwrap()
+            .downcast_exact::<PyBool>()?
+            .is_true();
+        self.was_live = dict
+            .get_item("was_live")?
+            .unwrap()
+            .downcast_exact::<PyBool>()?
+            .is_true();
 
         Ok(())
     }
@@ -126,16 +140,22 @@ impl StreamManager {
             let py_list = PyList::empty_bound(py);
             let params = PyDict::new_bound(py);
             let opts = Self::get_dict(py);
-            let hook_struct = Py::new(py, PyStruct {
-                yt_bool: false,
-                is_upcoming: false,
-                is_live: false,
-                was_live: false,
-            })?;
+            let hook_struct = Py::new(
+                py,
+                PyStruct {
+                    yt_bool: false,
+                    is_upcoming: false,
+                    is_live: false,
+                    was_live: false,
+                },
+            )?;
 
             py_list.append(hook_struct.getattr(py, "hook")?.to_object(py))?;
             opts.bind(py).set_item("progress_hooks", py_list)?;
-            opts.bind(py).set_item("match_filter", hook_struct.getattr(py, "pre_filter")?.to_object(py))?;
+            opts.bind(py).set_item(
+                "match_filter",
+                hook_struct.getattr(py, "pre_filter")?.to_object(py),
+            )?;
             params.set_item("params", opts.bind(py))?;
 
             Ok(StreamManager {
@@ -159,7 +179,13 @@ impl StreamManager {
         dict.set_item("writethumbnail", true).unwrap();
         dict.set_item("socket_timeout", 90).unwrap(); // Not sure what value is best here.
         dict.set_item("quiet", true).unwrap();
-        // set logger
+        // dict.set_item("cookiefile", "res/cookies.txt").unwrap();
+        // Cookies from browser are almost always up to date and generally the better option, but
+        // cookie files are easier to transfer/set up on remote or headless devices.k
+        let tuple: Vec<&str> = vec!["firefox"];
+        dict.set_item("cookiesfrombrowser", PyTuple::new(py, tuple).unwrap()).unwrap();
+
+        // TODO: set logger
 
         // Sets download folders. I would prefer for the temp folder to be separate, rather than
         // nested, but that's a problem for another day.
@@ -173,28 +199,30 @@ impl StreamManager {
         // logger
         // logtostderr
         // wait_for_video
+        // setting is_live for the extractor arguement, check docs
         Bound::unbind(dict)
     }
 
-
     fn get_err_base(py: Python) -> PyObject {
         match PyModule::import_bound(py, "yt_dlp.utils") {
-            Ok(yt) => {
-                Bound::unbind(yt.getattr("YoutubeDLError").unwrap())
-            }
+            Ok(yt) => Bound::unbind(yt.getattr("YoutubeDLError").unwrap()),
             Err(err) => {
-                panic!("Error importing yt-dlp, check that it is available: {:?}", err)
+                panic!(
+                    "Error importing yt-dlp, check that it is available: {:?}",
+                    err
+                )
             }
         }
     }
 
     fn get_yt(py: Python) -> Result<PyObject, Box<dyn Error>> {
         match PyModule::import_bound(py, "yt_dlp") {
-            Ok(yt) => {
-                Ok(Bound::unbind(yt.getattr("YoutubeDL")?))
-            }
+            Ok(yt) => Ok(Bound::unbind(yt.getattr("YoutubeDL")?)),
             Err(err) => {
-                panic!("Error importing yt-dlp, check that it is available: {:?}", err)
+                panic!(
+                    "Error importing yt-dlp, check that it is available: {:?}",
+                    err
+                )
             }
         }
     }
@@ -204,14 +232,26 @@ impl StreamManager {
     // Leaves the while loop but has an exit code 0?
     pub fn set_live_only(&mut self) {
         Python::with_gil(|py| {
-            self.opts.bind(py).set_item("match_filter", PyModule::import_bound(py, "yt_dlp.utils").unwrap()
-                .getattr("_utils").unwrap()
-                .call_method1("match_filter_func", ("is_live",)).unwrap()).unwrap();
+            self.opts
+                .bind(py)
+                .set_item(
+                    "match_filter",
+                    PyModule::import_bound(py, "yt_dlp.utils")
+                        .unwrap()
+                        .getattr("_utils")
+                        .unwrap()
+                        .call_method1("match_filter_func", ("is_live",))
+                        .unwrap(),
+                )
+                .unwrap();
 
             let params = PyDict::new_bound(py);
             params.set_item("params", self.opts.bind(py)).unwrap();
 
-            self.yt_dlp = Self::get_yt(py).unwrap().call_bound(py, (), Some(&params)).unwrap()
+            self.yt_dlp = Self::get_yt(py)
+                .unwrap()
+                .call_bound(py, (), Some(&params))
+                .unwrap()
         })
     }
 
@@ -237,7 +277,8 @@ impl StreamManager {
     pub fn download_loop(&mut self) {
         while !self.complete {
             match Python::with_gil(|py| {
-                self.yt_dlp.call_method_bound(py, "download", (&self.target,), None)
+                self.yt_dlp
+                    .call_method_bound(py, "download", (&self.target,), None)
             }) {
                 Ok(_res) => {
                     info!("{}: Download attempt ended without error.", self.target);
@@ -250,7 +291,10 @@ impl StreamManager {
                     }) {
                         self.error_check(err)
                     } else {
-                        error!("{}: Download attempt encountered an unexpected error: {}", self.target, err);
+                        error!(
+                            "{}: Download attempt encountered an unexpected error: {}",
+                            self.target, err
+                        );
                         self.complete = true;
                     }
                 }
@@ -280,8 +324,10 @@ impl StreamManager {
                 // Try again in half the duration or 5 minutes, whatever is sooner, in case the
                 // streamer starts early/moves the time forward.
                 info!("{}: {}", self.target, err);
-                thread::sleep(time::Duration::from_secs(
-                    cmp::min(err_msg.next().unwrap().parse::<u64>().unwrap() * 30, 300)));
+                thread::sleep(time::Duration::from_secs(cmp::min(
+                    err_msg.next().unwrap().parse::<u64>().unwrap() * 30,
+                    300,
+                )));
             }
             "hours." | "hours" => {
                 // Try again in an hour. Hour based moves are probably the most common time change,
@@ -302,17 +348,21 @@ impl StreamManager {
                 thread::sleep(time::Duration::from_secs(60 * 60 * 24));
             }
             // Member video
-            // TODO: Add browser cookie support/check
-            "perks." => {
+            "perks." | "app." => {
                 warn!("{}: {}", self.target, err);
-                Python::with_gil(|py| {
-                    if !self.opts.bind(py).contains("cookiefile").unwrap() {
-                        self.opts.bind(py).set_item("cookiefile", "resources/cookies.txt").unwrap()
-                    } else {
-                        warn!("{}: Failed membership authentication.", self.target);
-                        self.complete = true
-                    }
-                })
+                warn!("{}: Failed membership authentication.", self.target);
+                self.complete = true
+                // Python::with_gil(|py| {
+                //     if !self.opts.bind(py).contains("cookiefile").unwrap() {
+                //         self.opts
+                //             .bind(py)
+                //             .set_item("cookiefile", "resources/cookies.txt")
+                //             .unwrap()
+                //     } else {
+                //         warn!("{}: Failed membership authentication.", self.target);
+                //         self.complete = true
+                //     }
+                // })
             }
             "difficulties." | "difficulties" => {
                 // Found when a stream is offline, after having started. May be used elsewhere.
@@ -321,7 +371,10 @@ impl StreamManager {
             }
             val => {
                 //Unknown error message.
-                error!("{}: Unsupported error message: {} (keyword: {})", self.target, err, val);
+                error!(
+                    "{}: Unsupported error message: {} (keyword: {})",
+                    self.target, err, val
+                );
                 self.complete = true
             }
         }
@@ -345,16 +398,22 @@ impl StreamManager {
             // closure borrow rules. If there's any functionality refactoring in the future, this is
             // near the top of the hit list.
             let temp_target = self.target.clone();
-            let response = Runtime::new().unwrap()
-                .block_on(async {
-                    task::spawn_blocking(|| {
-                        api_handler::google_api(temp_target)
-                    }).await.unwrap().await
-                });
+            let response = Runtime::new().unwrap().block_on(async {
+                task::spawn_blocking(|| api_handler::google_api(temp_target))
+                    .await
+                    .unwrap()
+                    .await
+            });
 
             match response {
                 Ok(res) => {
-                    match res.snippet.unwrap().live_broadcast_content.unwrap().as_str() {
+                    match res
+                        .snippet
+                        .unwrap()
+                        .live_broadcast_content
+                        .unwrap()
+                        .as_str()
+                    {
                         "live" => {
                             //Video still going, continue downloading
                             warn!("{}: Video is still live.", self.target)
@@ -365,10 +424,16 @@ impl StreamManager {
                         }
                         "upcoming" => {
                             // Not sure if this is even reachable given current conditions.
-                            error!("{}: Download attempt successfully finished, but is not live yet!", self.target)
+                            error!(
+                                "{}: Download attempt successfully finished, but is not live yet!",
+                                self.target
+                            )
                         }
                         err => {
-                            error!("{}: Google API returned an unexpected value for is_live: {}", self.target, err);
+                            error!(
+                                "{}: Google API returned an unexpected value for is_live: {}",
+                                self.target, err
+                            );
                             self.complete = true;
                         }
                     }
